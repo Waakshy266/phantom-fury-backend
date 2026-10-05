@@ -56,5 +56,31 @@ app.get('/api/applications', async (req, res) => {
         } else { res.status(403).json({ error: "Denied." }); }
     } catch(e) { res.status(500).json({ error: "Failed to read applications." }); }
 });
+// --- ADMIN PASSWORD RESET ENDPOINT ---
+app.post('/api/admin/reset-password', async (req, res) => {
+    const { adminUser, targetUser, newPassword } = req.body;
+    try {
+        // Verify that the person making the change is a verified admin
+        const adminCheck = await usersDb.findOne({ username: adminUser.trim().toLowerCase() });
+        if (!adminCheck || adminCheck.role !== 'admin') {
+            return res.status(403).json({ error: "Access Denied. Admins only." });
+        }
+
+        // Target and hash the new password string
+        const cleanTarget = targetUser.trim().toLowerCase();
+        const hashedNew = await bcrypt.hash(newPassword, 10);
+
+        // Update the document record in users.db
+        const updated = await usersDb.update(
+            { username: cleanTarget }, 
+            { $set: { password: hashedNew } }
+        );
+
+        if (updated === 0) {
+            return res.status(444).json({ error: "Target account not found." });
+        }
+        res.json({ success: true, message: "Password updated successfully!" });
+    } catch(e) { res.status(500).json({ error: "Reset transmission failure." }); }
+});
 
 app.listen(port, () => console.log(`Database operational on port ${port}`));
