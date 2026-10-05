@@ -10,7 +10,6 @@ const port = process.env.PORT || 3000;
 app.use(express.json());
 app.use(cors());
 
-// Automatically initializes clean cloud text data stores inside Render
 const usersDb = Datastore.create({ filename: path.join(__dirname, 'users.db'), autoload: true });
 const appsDb = Datastore.create({ filename: path.join(__dirname, 'applications.db'), autoload: true });
 
@@ -18,11 +17,12 @@ const appsDb = Datastore.create({ filename: path.join(__dirname, 'applications.d
 app.post('/api/register', async (req, res) => {
     const { username, password } = req.body;
     try {
-        if (await usersDb.findOne({ username: username.trim() })) {
+        const cleanUser = username.trim().toLowerCase();
+        if (await usersDb.findOne({ username: cleanUser })) {
             return res.status(400).json({ error: "Username taken." });
         }
         const hashed = await bcrypt.hash(password, 10);
-        await usersDb.insert({ username: username.trim(), password: hashed, role: 'player' });
+        await usersDb.insert({ username: cleanUser, password: hashed, role: 'player' });
         res.json({ success: true });
     } catch(e) { res.status(500).json({ error: "Registration failed." }); }
 });
@@ -31,7 +31,8 @@ app.post('/api/register', async (req, res) => {
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     try {
-        const user = await usersDb.findOne({ username: username.trim() });
+        const cleanUser = username.trim().toLowerCase();
+        const user = await usersDb.findOne({ username: cleanUser });
         if (user && await bcrypt.compare(password, user.password)) {
             res.json({ success: true, username: user.username, role: user.role });
         } else { res.status(400).json({ error: "Invalid credentials." }); }
