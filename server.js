@@ -1,63 +1,59 @@
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
-const bcrypt = require('bcryptjs');
 const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const Datastore = require('nedb-promises');
 const path = require('path');
 
 const app = express();
-const PORT = 3000;
+const port = process.env.PORT || 3000;
 
 app.use(express.json());
 app.use(cors());
 
-const db = new sqlite3.Database(path.join(__dirname, 'phantom_fury.db'), (err) => {
-    if (!err) console.log('Connected to SQLite database safely.');
-});
+// Automatically initializes clean cloud text data stores inside Render
+const usersDb = Datastore.create({ filename: path.join(__dirname, 'users.db'), autoload: true });
+const appsDb = Datastore.create({ filename: path.join(__dirname, 'applications.db'), autoload: true });
 
-db.serialize(() => {
-    db.run(`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, role TEXT DEFAULT 'player')`);
-    db.run(`CREATE TABLE IF NOT EXISTS applications (id INTEGER PRIMARY KEY AUTOINCREMENT, nickname TEXT, uid TEXT, level TEXT, rank TEXT, reason TEXT)`);
-});
-
+// --- REGISTER ACCOUNT ---
 app.post('/api/register', async (req, res) => {
     const { username, password } = req.body;
     try {
+        if (await usersDb.findOne({ username: username.trim() })) {
+            return res.status(400).json({ error: "Username taken." });
+        }
         const hashed = await bcrypt.hash(password, 10);
-        db.run(`INSERT INTO users (username, password) VALUES (?, ?)`, [username.trim(), hashed], (err) => {
-            if (err) return res.status(400).json({ error: "Username taken." });
-            res.json({ success: true });
-        });
-    } catch(e) { res.status(500).end(); }
+        await usersDb.insert({ username: username.trim(), password: hashed, role: 'player' });
+        res.json({ success: true });
+    } catch(e) { res.status(500).json({ error: "Registration failed." }); }
 });
 
-app.post('/api/login', (req, res) => {
+// --- LOGIN ROUTE ---
+app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
-    db.get(`SELECT * FROM users WHERE username = ?`, [username.trim()], async (err, user) => {
+    try {
+        const user = await usersDb.findOne({ username: username.trim() });
         if (user && await bcrypt.compare(password, user.password)) {
             res.json({ success: true, username: user.username, role: user.role });
         } else { res.status(400).json({ error: "Invalid credentials." }); }
-    });
+    } catch(e) { res.status(500).json({ error: "Login failed." }); }
 });
 
-app.post('/api/apply', (req, res) => {
-    const { nickname, uid, level, rank, reason } = req.body;
-    db.run(`INSERT INTO applications (nickname, uid, level, rank, reason) VALUES (?, ?, ?, ?, ?)`, [nickname, uid, level, rank, reason], () => {
+// --- SUBMIT APPLICATION ---
+app.post('/api/apply', async (req, res) => {
+    try {
+        await appsDb.insert(req.body);
         res.json({ success: true });
-    });
+    } catch(e) { res.status(500).json({ error: "Submission failed." }); }
 });
 
-app.get('/api/applications', (req, res) => {
-    const user = req.headers['x-username'];
-    db.get(`SELECT role FROM users WHERE username = ?`, [user], (err, row) => {
-        if (row && row.role === 'admin') {
-            db.all(`SELECT * FROM applications`, [], (err, rows) => { res.json({ success: true, applications: rows }); });
+// --- VIEW APPLICATIONS (ADMINS ONLY) ---
+app.get('/api/applications', async (req, res) => {
+    try {
+        const user = await usersDb.findOne({ username: req.headers['x-username'] });
+        if (user && user.role === 'admin') {
+            res.json({ success: true, applications: await appsDb.find({}) });
         } else { res.status(403).json({ error: "Denied." }); }
-    });
+    } catch(e) { res.status(500).json({ error: "Failed to read applications." }); }
 });
 
-// Render dynamically assigns a port via process.env.PORT
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-    console.log(`Database operational on port ${port}`);
-});
-
+app.listen(port, () => console.log(`Database operational on port ${port}`));
